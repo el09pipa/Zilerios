@@ -2,11 +2,35 @@
 import streamlit as st
 import time
 import os
+from datetime import datetime
 from moderation import contiene_lenguaje_inapropiado, obtener_mensaje_bloqueo
 from core_ai import CoreZilerios
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Zilerios AI", page_icon="🤖", layout="wide")
+
+# --- CONTROL DE ACCESO PÚBLICO OBLIGATORIO ---
+# Si el usuario no ha iniciado sesión en Streamlit Cloud, congela la app y le pide identificarse
+if not st.user or not st.user.email:
+    st.title("🤖 ¡Bienvenido a Zilerios AI!")
+    st.warning("Para poder usar la Inteligencia Artificial de forma gratuita, es obligatorio identificarse.")
+    st.markdown("""
+    Por favor, inicia sesión haciendo clic en el botón **'Sign in'** que aparece arriba a la derecha 
+    o en la barra lateral para desbloquear el chat. 
+    
+    *Esto nos ayuda a mantener el servicio seguro y libre de spam. ¡Gracias!* ✨
+    """)
+    st.stop() # Detiene la ejecución. Nadie puede ver el chatbot sin loguearse primero.
+
+# --- SISTEMA DE REGISTRO / ANALÍTICAS (LOGS) ---
+usuario_actual = st.user.email
+
+def registrar_evento(usuario, tipo_evento, detalle):
+    """Guarda en un archivo de texto quién interactúa con la app, qué hizo y a qué hora 🕵️‍♂️"""
+    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    linea_registro = f"[{fecha_actual}] Usuario: {usuario} | Acción: {tipo_evento} | Detalle: {detalle}\n"
+    with open("registro_zilerios.txt", "a", encoding="utf-8") as f:
+        f.write(linea_registro)
 
 # Inicializar el núcleo de la IA de forma segura en la sesión
 if "ai_core" not in st.session_state:
@@ -20,6 +44,11 @@ if "app_inicializada" not in st.session_state:
     with st.spinner("Iniciando ecosistema Zilerios... 🚀"):
         time.sleep(1.0)
     st.session_state["app_inicializada"] = True
+
+# --- REGISTRAR VISITA DE USUARIO ---
+if "visita_registrada" not in st.session_state:
+    registrar_evento(usuario_actual, "VISITA", "Entró a la aplicación web.")
+    st.session_state["visita_registrada"] = True
 
 # --- GESTIÓN DEL HISTORIAL (CHATS INFINITOS) ---
 if "chats" not in st.session_state:
@@ -49,6 +78,7 @@ with st.sidebar:
         nuevo_nombre = f"Conversación {nuevo_numero}"
         st.session_state.chats[nuevo_nombre] = {"pinned": False, "messages": []}
         st.session_state.chat_actual = nuevo_nombre
+        registrar_evento(usuario_actual, "CREAR_CHAT", f"Creó la {nuevo_nombre}")
         st.rerun()
 
     st.markdown("### 💬 Mis Chats")
@@ -75,6 +105,7 @@ with st.sidebar:
                     if len(st.session_state.chats) > 1:
                         del st.session_state.chats[nombre_chat]
                         st.session_state.chat_actual = list(st.session_state.chats.keys())[0]
+                        registrar_evento(usuario_actual, "BORRAR_CHAT", f"Eliminó el chat: {nombre_chat}")
                     else:
                         st.warning("No puedes borrar todos los chats.")
                     st.rerun()
@@ -83,23 +114,24 @@ with st.sidebar:
 st.title(f"⚡ {st.session_state.chat_actual}")
 
 # RENDERIZAR HISTORIAL DE MENSAJES GUARDADOS
-# Usamos el nombre exacto del chat actual para evitar duplicación de llaves (keys)
 for i, msg in enumerate(st.session_state.chats[st.session_state.chat_actual]["messages"]):
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
         if "image" in msg:
             st.image(msg["image"])
         
-        # Sistema de Feedback (Botones 👍 / 👎) con llaves 100% únicas
+        # Sistema de Feedback (Botones 👍 / 👎)
         if msg["role"] == "assistant":
             col_f1, col_f2, _ = st.columns([1, 1, 15])
             id_unico_boton = f"{st.session_state.chat_actual}_{i}"
             with col_f1:
                 if st.button("👍", key=f"up_{id_unico_boton}"):
                     st.toast("¡Gracias! Guardamos tu valoración positiva. 😊")
+                    registrar_evento(usuario_actual, "FEEDBACK_POSITIVO", f"Dio Like al mensaje {i} de {st.session_state.chat_actual}")
             with col_f2:
                 if st.button("👎", key=f"down_{id_unico_boton}"):
                     st.toast("Tomamos nota para mejorar la respuesta. 🛠️")
+                    registrar_evento(usuario_actual, "FEEDBACK_NEGATIVO", f"Dio Dislike al mensaje {i} de {st.session_state.chat_actual}")
 
 # Caja de herramientas multimedia (Cámara y Archivos)
 with st.expander("📁 Adjuntar Archivos o usar Cámara", expanded=False):
@@ -117,6 +149,7 @@ if prompt_usuario:
     with st.chat_message("user"):
         st.write(prompt_usuario)
     st.session_state.chats[st.session_state.chat_actual]["messages"].append({"role": "user", "content": prompt_usuario})
+    registrar_evento(usuario_actual, "PREGUNTA_CHAT", f"Preguntó en {st.session_state.chat_actual}: '{prompt_usuario[:50]}...'")
     
     # 2. Filtro de moderación
     if contiene_lenguaje_inapropiado(prompt_usuario):
@@ -124,6 +157,7 @@ if prompt_usuario:
         with st.chat_message("assistant"):
             st.error(mensaje_bloqueo)
         st.session_state.chats[st.session_state.chat_actual]["messages"].append({"role": "assistant", "content": mensaje_bloqueo})
+        registrar_evento(usuario_actual, "BLOQUEO_MODERACION", f"Activó el filtro con: '{prompt_usuario}'")
     
     # 3. Procesar respuesta de la IA en tiempo real
     else:
@@ -154,5 +188,4 @@ if prompt_usuario:
                     st.write(respuesta)
                     st.session_state.chats[st.session_state.chat_actual]["messages"].append({"role": "assistant", "content": respuesta})
     
-    # Forzar recarga limpia para dibujar los nuevos botones de feedback con sus IDs correctos
     st.rerun()
