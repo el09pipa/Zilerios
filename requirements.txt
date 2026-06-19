@@ -1,4 +1,3 @@
 streamlit
 g4f
 google-generativeai
-st-gsheets-connection
