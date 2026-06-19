@@ -1,166 +1,49 @@
 # app.py
 import streamlit as st
-import time
-import os
-import pandas as pd
-import json
-from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
 from moderation import contiene_lenguaje_inapropiado, obtener_mensaje_bloqueo
 from core_ai import CoreZilerios
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Zilerios AI", page_icon="🤖", layout="wide")
 
-# --- CONEXIÓN CON GOOGLE SHEETS ---
-conn = None
-error_conexion = None
+st.title("🤖 Zilerios AI")
+st.caption("Chat libre, sin registros ni complicaciones. ¡Pregúntame lo que quieras! ⚡")
 
-try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-except Exception as e:
-    error_conexion = f"Error al inicializar la conexión: {e}"
-
-# --- FUNCIONES PARA GUARDAR Y CARGAR CHATS DE LA NUBE ---
-def cargar_chats_usuario(correo):
-    """Busca en el Excel si este usuario ya tiene chats guardados"""
-    global error_conexion
-    if conn is None:
-        return {"Conversación 1": {"pinned": False, "messages": []}}
-    try:
-        df = conn.read(worksheet="Chats", ttl=0)
-        df_user = df[df["usuario"] == correo]
-        
-        if df_user.empty:
-            return {"Conversación 1": {"pinned": False, "messages": []}}
-        
-        ultimo_registro = df_user.iloc[-1]["historial_json"]
-        return json.loads(ultimo_registro)
-    except Exception as e:
-        error_conexion = f"Error al LEER de Google Sheets: {e}"
-        return {"Conversación 1": {"pinned": False, "messages": []}}
-
-def guardar_chats_usuario(correo, chats_dict):
-    """Guarda todo el historial de chats del usuario en el Excel"""
-    global error_conexion
-    if conn is None:
-        st.error("No se puede guardar: la conexión 'conn' es Null.")
-        return
-    try:
-        fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        chats_json = json.dumps(chats_dict, ensure_ascii=False)
-        
-        nueva_fila = pd.DataFrame([{
-            "fecha": fecha_actual,
-            "usuario": correo,
-            "historial_json": chats_json
-        }])
-        
-        try:
-            df_existente = conn.read(worksheet="Chats", ttl=0)
-            df_total = pd.concat([df_existente, nueva_fila], ignore_index=True)
-        except Exception:
-            df_total = nueva_fila
-            
-        conn.update(worksheet="Chats", data=df_total)
-        st.toast("¡Historial sincronizado en la nube! ☁️")
-    except Exception as e:
-        error_conexion = f"Error al ESCRIBIR en Google Sheets: {e}"
-
-# --- CONTROL DE ACCESO MEDIANTE FORMULARIO ---
-if "usuario_identificado" not in st.session_state:
-    st.session_state["usuario_identificado"] = False
-if "correo_usuario" not in st.session_state:
-    st.session_state["correo_usuario"] = ""
-
-if not st.session_state["usuario_identificado"]:
-    st.title("🤖 ¡Bienvenido a Zilerios AI!")
-    st.subheader("Acceso Público y Gratuito")
-    
-    with st.form("registro_entrada"):
-        input_correo = st.text_input("Introduce tu Nombre o Correo:", placeholder="Ej: juan@gmail.com o Carlos")
-        boton_entrar = st.form_submit_button("🚀 Desbloquear Zilerios AI")
-        
-        if boton_entrar:
-            if input_correo.strip() != "":
-                correo_limpio = input_correo.strip().lower()
-                st.session_state["correo_usuario"] = correo_limpio
-                st.session_state["usuario_identificado"] = True
-                st.session_state["chats"] = cargar_chats_usuario(correo_limpio)
-                st.session_state["chat_actual"] = list(st.session_state["chats"].keys())[0]
-                st.success("¡Acceso concedido!")
-                time.sleep(0.5)
-                st.rerun()
-            else:
-                st.error("⚠️ Por favor, introduce un nombre o correo válido.")
-    st.stop()
-
-usuario_actual = st.session_state["correo_usuario"]
-
+# --- INICIALIZAR EL MOTOR DE LA IA ---
 if "ai_core" not in st.session_state:
     st.session_state.ai_core = CoreZilerios()
 
-RUTA_LOGO = "isotipo_zilerios.png"
-NOMBRE_COMPANIA = "Zilerios"
+# --- HISTORIAL EN MEMORIA LOCAL ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# --- MOSTRAR ERRORES EN PANTALLA (SI LOS HAY) ---
-if error_conexion:
-    st.error(f"🚨 detector de fallos en el Excel:\n{error_conexion}")
-    st.info("Revisa si copiaste bien el enlace en Secrets o si la pestaña del Excel se llama exactamente 'Chats'")
-
-# --- MENÚ LATERAL (SIDEBAR) ---
-with st.sidebar:
-    st.markdown("### 🤖 Zilerios")
-    st.caption(f"Usuario: {usuario_actual} 👤")
-    st.divider()
-    
-    if st.button("➕ Nueva Conversación", use_container_width=True):
-        nuevo_numero = len(st.session_state.chats) + 1
-        nuevo_nombre = f"Conversación {nuevo_numero}"
-        st.session_state.chats[nuevo_nombre] = {"pinned": False, "messages": []}
-        st.session_state.chat_actual = nuevo_nombre
-        guardar_chats_usuario(usuario_actual, st.session_state.chats)
-        st.rerun()
-
-    st.markdown("### 💬 Mis Chats")
-    for nombre_chat, info in list(st.session_state.chats.items()):
-        tipo_boton = "primary" if st.session_state.chat_actual == nombre_chat else "secondary"
-        if st.button(f"💬 {nombre_chat}", key=f"sidebar_sel_{nombre_chat}", use_container_width=True, type=tipo_boton):
-            st.session_state.chat_actual = nombre_chat
-            st.rerun()
-
-# --- PANTALLA PRINCIPAL ---
-st.title(f"⚡ {st.session_state.chat_actual}")
-
-for i, msg in enumerate(st.session_state.chats[st.session_state.chat_actual]["messages"]):
+# Mostrar los mensajes anteriores del chat
+for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-prompt_usuario = st.chat_input("Escribe tu petición para Zilerios...")
+# --- ENTRADA DEL USUARIO ---
+prompt_usuario = st.chat_input("Escribe aquí tu petición para Zilerios...")
 
 if prompt_usuario:
     with st.chat_message("user"):
         st.write(prompt_usuario)
-    st.session_state.chats[st.session_state.chat_actual]["messages"].append({"role": "user", "content": prompt_usuario})
+    st.session_state.messages.append({"role": "user", "content": prompt_usuario})
     
+    # Moderación de insultos
     if contiene_lenguaje_inapropiado(prompt_usuario):
         mensaje_bloqueo = obtener_mensaje_bloqueo()
         with st.chat_message("assistant"):
             st.error(mensaje_bloqueo)
-        st.session_state.chats[st.session_state.chat_actual]["messages"].append({"role": "assistant", "content": mensaje_bloqueo})
-   else:
+        st.session_state.messages.append({"role": "assistant", "content": mensaje_bloqueo})
+    else:
         with st.chat_message("assistant"):
             with st.spinner("Zilerios está pensando... 🧠"):
                 respuesta = st.session_state.ai_core.generar_texto_extenso(prompt_usuario)
                 
                 # --- LIMPIADOR AUTOMÁTICO DE ESPACIOS RAROS ---
-                # Quita espacios antes de los signos de puntuación (ej: "víctimas ," -> "víctimas,")
                 respuesta = respuesta.replace(" ,", ",").replace(" .", ".").replace(" !", "!").replace(" ?", "?")
-                
-                # Junta letras con tildes rotas que se suelen separar (ej: "All á" -> "Allá", "ser á" -> "será")
                 respuesta = respuesta.replace(" á", "á").replace(" é", "é").replace(" í", "í").replace(" ó", "ó").replace(" ú", "ú")
-                
-                # Arregla palabras específicas que el modelo rompa a menudo (puedes añadir las que detectes)
                 respuesta = respuesta.replace("consec uencias", "consecuencias")
                 # ----------------------------------------------
 
