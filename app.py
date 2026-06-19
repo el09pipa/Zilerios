@@ -148,12 +148,21 @@ if prompt_usuario:
         with st.chat_message("assistant"):
             st.error(mensaje_bloqueo)
         st.session_state.chats[st.session_state.chat_actual]["messages"].append({"role": "assistant", "content": mensaje_bloqueo})
-    else:
+   else:
         with st.chat_message("assistant"):
-            with st.spinner("Zilerios está procesando... 🧠"):
+            with st.spinner("Zilerios está pensando... 🧠"):
                 respuesta = st.session_state.ai_core.generar_texto_extenso(prompt_usuario)
+                
+                # --- LIMPIADOR AUTOMÁTICO DE ESPACIOS RAROS ---
+                # Quita espacios antes de los signos de puntuación (ej: "víctimas ," -> "víctimas,")
+                respuesta = respuesta.replace(" ,", ",").replace(" .", ".").replace(" !", "!").replace(" ?", "?")
+                
+                # Junta letras con tildes rotas que se suelen separar (ej: "All á" -> "Allá", "ser á" -> "será")
+                respuesta = respuesta.replace(" á", "á").replace(" é", "é").replace(" í", "í").replace(" ó", "ó").replace(" ú", "ú")
+                
+                # Arregla palabras específicas que el modelo rompa a menudo (puedes añadir las que detectes)
+                respuesta = respuesta.replace("consec uencias", "consecuencias")
+                # ----------------------------------------------
+
                 st.write(respuesta)
-                st.session_state.chats[st.session_state.chat_actual]["messages"].append({"role": "assistant", "content": respuesta})
-    
-    guardar_chats_usuario(usuario_actual, st.session_state.chats)
-    st.rerun()
+                st.session_state.messages.append({"role": "assistant", "content": respuesta})
