@@ -9,22 +9,44 @@ from core_ai import CoreZilerios
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Zilerios AI", page_icon="🤖", layout="wide")
 
-# --- CONTROL DE ACCESO PÚBLICO OBLIGATORIO ---
-# Si el usuario no ha iniciado sesión en Streamlit Cloud, congela la app y le pide identificarse
-if not st.user or not st.user.email:
+# --- CONTROL DE ACCESO MEDIANTE FORMULARIO INTEGRADO ---
+# Usamos session_state para recordar si el usuario ya se identificó
+if "usuario_identificado" not in st.session_state:
+    st.session_state["usuario_identificado"] = False
+if "correo_usuario" not in st.session_state:
+    st.session_state["correo_usuario"] = ""
+
+# Si no se ha identificado, mostramos la caja de registro propia
+if not st.session_state["usuario_identificado"]:
     st.title("🤖 ¡Bienvenido a Zilerios AI!")
-    st.warning("Para poder usar la Inteligencia Artificial de forma gratuita, es obligatorio identificarse.")
-    st.markdown("""
-    Por favor, inicia sesión haciendo clic en el botón **'Sign in'** que aparece arriba a la derecha 
-    o en la barra lateral para desbloquear el chat. 
+    st.subheader("Acceso Público y Gratuito")
     
-    *Esto nos ayuda a mantener el servicio seguro y libre de spam. ¡Gracias!* ✨
+    st.markdown("""
+    Para comenzar a usar la Inteligencia Artificial, por favor indícanos tu nombre o correo electrónico. 
+    *Esto nos ayuda a guardar tus chats y prevenir el spam en el servidor.* ✨
     """)
-    st.stop() # Detiene la ejecución. Nadie puede ver el chatbot sin loguearse primero.
+    
+    # Formulario limpio de entrada
+    with st.form("registro_entrada"):
+        input_correo = st.text_input("Introduce tu Nombre o Correo:", placeholder="Ej: juan@gmail.com o Carlos")
+        boton_entrar = st.form_submit_button("🚀 Desbloquear Zilerios AI")
+        
+        if boton_entrar:
+            if input_correo.strip() != "":
+                st.session_state["correo_usuario"] = input_correo.strip()
+                st.session_state["usuario_identificado"] = True
+                st.success("¡Acceso concedido! Cargando...")
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.error("⚠️ Por favor, introduce un nombre o correo válido para continuar.")
+                
+    st.stop() # Congela el resto de la app hasta que rellenen el formulario de arriba
+
+# --- ASIGNACIÓN DEL USUARIO ACTUAL ---
+usuario_actual = st.session_state["correo_usuario"]
 
 # --- SISTEMA DE REGISTRO / ANALÍTICAS (LOGS) ---
-usuario_actual = st.user.email
-
 def registrar_evento(usuario, tipo_evento, detalle):
     """Guarda en un archivo de texto quién interactúa con la app, qué hizo y a qué hora 🕵️‍♂️"""
     fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -70,6 +92,7 @@ with st.sidebar:
     with col_name:
         st.subheader(NOMBRE_COMPANIA)
     
+    st.caption(f"Conectado como: {usuario_actual}👤")
     st.divider()
     
     # Botón para añadir chats infinitos
@@ -145,13 +168,11 @@ with st.expander("📁 Adjuntar Archivos o usar Cámara", expanded=False):
 prompt_usuario = st.chat_input("Escribe tu petición para Zilerios...")
 
 if prompt_usuario:
-    # 1. Mostrar inmediatamente el mensaje del usuario en la pantalla y guardarlo
     with st.chat_message("user"):
         st.write(prompt_usuario)
     st.session_state.chats[st.session_state.chat_actual]["messages"].append({"role": "user", "content": prompt_usuario})
     registrar_evento(usuario_actual, "PREGUNTA_CHAT", f"Preguntó en {st.session_state.chat_actual}: '{prompt_usuario[:50]}...'")
     
-    # 2. Filtro de moderación
     if contiene_lenguaje_inapropiado(prompt_usuario):
         mensaje_bloqueo = obtener_mensaje_bloqueo()
         with st.chat_message("assistant"):
@@ -159,13 +180,11 @@ if prompt_usuario:
         st.session_state.chats[st.session_state.chat_actual]["messages"].append({"role": "assistant", "content": mensaje_bloqueo})
         registrar_evento(usuario_actual, "BLOQUEO_MODERACION", f"Activó el filtro con: '{prompt_usuario}'")
     
-    # 3. Procesar respuesta de la IA en tiempo real
     else:
         with st.chat_message("assistant"):
             with st.spinner("Zilerios está procesando tu solicitud... 🧠"):
                 texto_lower = prompt_usuario.lower()
                 
-                # Enrutamiento de respuestas
                 if "resolver" in texto_lower or "matematica" in texto_lower or "calcula" in texto_lower:
                     respuesta = st.session_state.ai_core.resolver_matematicas(prompt_usuario)
                     st.write(respuesta)
